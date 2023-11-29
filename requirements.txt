@@ -1,0 +1,12 @@
+tqdm==4.65.0
+pandas>=2.1
+plotnine>0.12
+altair>=5
+matplotlib>=3.7
+
+# Add pkgs required by VS Code
+ipykernel>=6.27.0
+
+# SQL
+jupysql>=0.10.4
+sqlalchemy>=2.0.0
