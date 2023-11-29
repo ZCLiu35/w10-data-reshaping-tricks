@@ -1,0 +1,1 @@
+This folder is gitignored! It is used to store the data created in this project.
