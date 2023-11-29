@@ -10,3 +10,6 @@ ipykernel>=6.27.0
 # SQL
 jupysql>=0.10.4
 sqlalchemy>=2.0.0
+
+# my own package
+./src/python/discordia
