@@ -6,6 +6,7 @@ matplotlib>=3.7
 
 # Add pkgs required by VS Code
 ipykernel>=6.27.0
+ipywidgets
 
 # SQL
 jupysql>=0.10.4

@@ -178,7 +178,7 @@ def get_debate_section(debate_section):
         
     return debate_items
 
-def scrape_debate_sections(driver):
+def scrape_debate_sections(driver, url):
     """Scrapes the debate sections from the page.
 
     Args:
@@ -191,6 +191,8 @@ def scrape_debate_sections(driver):
 
     if not isinstance(driver, webdriver.Firefox):
         raise ValueError(f"Expected a Selenium Firefox WebDriver but got {type(driver)}")
+
+    driver.get(url)
 
     debate_sections = driver.find_elements(By.CSS_SELECTOR, "ul.business-list > li")
     all_debate_sections = [get_debate_section(debate_section) for debate_section in debate_sections]
