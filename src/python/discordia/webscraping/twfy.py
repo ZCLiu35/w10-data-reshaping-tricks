@@ -201,7 +201,7 @@ def scrape_debate_sections(driver, url):
 
 #### DEBATE SPEECHES ####
 
-def scrape_one_speech(speech_block, url): 
+def scrape_one_speech(speech_block): 
     """
     Extracts information about speaker and speech content from one <div> block for speeches. 
     
@@ -235,7 +235,6 @@ def scrape_one_speech(speech_block, url):
         speech_raw_text += paragraph.text + "\n\n"
 
     return {
-        "debate_id": re.search(r".*id=(.*)", url).group(1), 
         "speech_id": speech_block.get("id"), 
         "speaker_id": re.search(r".*p=(.*)", unparsed_speaker_id).group(1), 
         "speaker_position": speaker_block.find("small").text,
@@ -292,30 +291,229 @@ def get_all_speech_blocks(url):
         return speech_blocks
     return None 
 
-def get_speeches(url): 
+def get_speeches_divisions_and_votes(list_urls, tqdm=None): 
     """
-    Wrapper function for `get_all_speech_blocks` and `scrape_one_speech`. Takes the url of a debate page and returns a pd.DataFrame of corresponding information. 
-    
+    Extracts information about speeches, house divisions and votes from a list of debate webpages.
+
     Args: 
-        url (str): url of the debate web page 
+        list_urls (list): list of urls of the debate webpages
     
     Returns: 
-        pd.DataFrame: A Pandas df with following columns:  
-            - debate_id (str): The debate ID, e.g. b.633.6  
-            - speech_id (str): The Speech ID, e.g. g631.2  
-            - speaker_id (str): The Speaker ID, e.g. 26020  
-            - speaker_position (str): Information about the position of the speaker  
-            - speech_html (str): speech content in html (containing embedded links)  
-            - speech_raw_text (str): speech content as raw text  
+        df_speeches (pd.DataFrame): Pandas df with the following columns: 
+            - debate_id (str): The debate ID, e.g. b.633.6 
+            - speech_id (str): The Speech ID, e.g. g631.2 
+            - speaker_id (str): The Speaker ID, e.g. 26020 
+            - speaker_position (str): Information about the position of the speaker 
+            - speech_html (str): speech content in html (containing embedded links) 
+            - speech_raw_text (str): speech content as raw text 
+        df_house_division (pd.DataFrame): Pandas df with the following columns: 
+            - debate_id (str): The debate ID, e.g. b.633.6 
+            - house_division_id (str): The vote ID, e.g. g631.2
+            - vote_title (str): The title of the vote, e.g. Rural Connectivity
+        df_votes (pd.DataFrame): Pandas df with the following columns: 
+            - debate_id (str): The debate ID, e.g. b.633.6 
+            - house_division_id (str): The vote ID, e.g. g631.2
+            - vote_title (str): The title of the vote, e.g. Rural Connectivity
+            - mp_id (str): The MP ID, e.g. 26020 
+            - mp_name (str): The MP name, e.g. Anum Qaisar 
+            - party (str): The MP's party, e.g. Scottish National Party
+            - comment (str): The MP's comment, e.g. (proxy vote cast by...)
+            - vote (str): The MP's vote, e.g. aye
+            - is_teller (bool): True if the MP is a teller, False otherwise
     """
-    speech_blocks = get_all_speech_blocks(url) 
-    
-    speech_info = [scrape_one_speech(speech, url) for speech in speech_blocks]
-    # Remove None values from the list
-    speech_info = [speech for speech in speech_info if speech is not None]
-    df_speeches = pd.DataFrame(speech_info)
 
-    return df_speeches
+    def __get_single_debate(url):
+        """
+
+        """
+
+        debate_id = re.search(r".*id=(.*)", url).group(1)
+        speech_blocks = get_all_speech_blocks(url) 
+        
+        if len(speech_blocks) == 0:
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+        # When there is one or more house divisions in a debate, 
+        # the first speech block is an HTML list of links to the divisions.
+        # In this case, we want to collect this list of votes
+        all_house_division_ids = []
+        if __is_list_of_house_divisions(speech_blocks[0]):
+            # Collect list of all speech blocks that represent votes
+            all_house_division_ids = [vote.get("href")[1:] for vote in speech_blocks[0].find_all("a")]
+            # No need to keep the first block
+            speeches = speech_blocks[1:]
+
+        """
+        HANDLE SPEECHES
+        """
+
+        # Identify all speech blocks that are not votes
+        speeches = [block for block in speech_blocks 
+                    if not (block.get("id") is None or block.get("id") in all_house_division_ids)]
+        speeches = [scrape_one_speech(speech) for speech in speeches]
+        # Remove None values
+        speeches = [speech for speech in speeches if speech is not None]
+        # Convert to Pandas df
+        df_speeches = pd.DataFrame(speeches)
+        df_speeches.insert(0, "debate_id", debate_id)
+
+        """
+        HANDLE VOTES
+        """
+
+        # Identify all speech blocks that are votes
+        votes = {block.get("id"): block for block in speech_blocks 
+                if block.get("id") is not None and block.get("id") in all_house_division_ids}
+        votes = [scrape_one_house_division(house_division_id, vote) 
+                for house_division_id, vote in votes.items()]
+        
+        if len(votes) > 0: 
+            df_votes = pd.concat(votes, ignore_index=True)
+            df_house_division = df_votes[['house_division_id', 'vote_title']].drop_duplicates().reset_index(drop=True)
+            df_house_division.insert(0, "debate_id", debate_id)
+            df_votes.drop(columns=['vote_title'], inplace=True)
+        else:
+            df_house_division = pd.DataFrame()
+            df_votes = pd.DataFrame()
+
+        return df_speeches, df_house_division, df_votes
+
+    # Get data frames for all debates
+    if tqdm is not None:
+        output = [__get_single_debate(url) for url in tqdm(list_urls)]
+    else:
+        output = [__get_single_debate(url) for url in list_urls]
+    df_speeches, df_house_division, df_votes = zip(*output)
+
+    df_speeches = pd.concat(df_speeches, ignore_index=True)
+    df_house_division = pd.concat(df_house_division, ignore_index=True)
+    df_votes = pd.concat(df_votes, ignore_index=True)
+
+    return df_speeches, df_house_division, df_votes
 
 #### HOUSE DIVISIONS (VOTES) ####
+
+def __is_list_of_house_divisions(speech_block):
+    """
+    Checks if the speech block is a list of votes. 
+    
+    Args: 
+        speech_block (bs4.element.Tag): <div> block for speech 
+    
+    Returns: 
+        bool: True if the speech block is a list of votes, False otherwise 
+    """
+    if not isinstance(speech_block, bs4.element.Tag):
+        raise ValueError(f"Expected a BeautifulSoup object but got {type(speech_block)}")
+    elif not (speech_block.name == "div" and speech_block.get("class") == ["debate-speech"]):
+        raise ValueError(f"The HTML element provided is not a speech block! Got:\n{speech_block.prettify()}")
+
+    return speech_block.find("ul", attrs={"class": "debate-speech__division__details"}) is not None
+
+def __get_mp_vote(li_element):
+    """
+    TODO: Write docstring
+
+    NOTE: I've commented out the mp_name and party because in principle, those can be extracted from the MP's table.
+          I have not deleted those lines because I'm not sure if the info on the MP's table is always always trustworthy.
+
+    """
+
+    a_element = li_element.find("a")
+
+    if a_element is None:
+        return {}
+    else:
+        # mp_name = a_element.text.strip()
+        mp_id_match = re.search(r'\/mp\/\?p=(\d+)', a_element.get("href"))
+        mp_id = mp_id_match.group(1) if mp_id_match else None
+
+        span_text = li_element.find('span').text.strip() if li_element.find('span') else None
+        comment_match = re.search(r'\((.*?)\)', span_text)
+        comment = comment_match.group(1) if comment_match else None
+        # party = span_text.replace(f"({comment})", '').strip() if comment else span_text.strip()
+
+        return {
+            'mp_id': mp_id,
+            # 'mp_name': mp_name, # As it appears in the list
+            # 'party': party,
+            'comment': comment
+        }
+
+def __get_votes_as_df(ul_element, is_teller=False):
+    """
+    TODO: Write docstring
+    """
+    # This is a list of voters
+    list_voters = [__get_mp_vote(li) for li in ul_element.find_all("li")]
+    df_voters_or_tellers = pd.DataFrame(list_voters)
+    df_voters_or_tellers['is_teller'] = is_teller
+    return df_voters_or_tellers
+
+def __get_mps_in_vote(div_votes):
+    """
+    Extracts information about MPs who voted in a division.
+
+    Note: this is a helper function for `scrape_one_house_division`.
+
+    Args:
+        div_votes (bs4.element.Tag): <div> block for votes (the ones right below the dots)
+    
+    Returns:
+        pd.DataFrame: A Pandas df with following columns: 
+            - mp_id (str): The MP ID, e.g. 26020 
+            - mp_name (str): The MP name, e.g. Anum Qaisar 
+            - party (str): The MP's party, e.g. Scottish National Party
+            - comment (str): The MP's comment, e.g. (proxy vote cast by...)
+            - is_vote_aye (str): True if the MP voted aye, False otherwise
+            - is_teller (bool): True if the MP is a teller, False otherwise
+
+    """
+        
+    is_vote_aye = div_votes.find("h3").text.split(":")[0].lower() == "aye"
+    
+    # voters and tellers appear in subsequent <ul> elements
+    # What differentiates them is the class attribute
+    # Voters have class=["division-names" "js-accordion"]
+    # Tellers have class=["division-names"]
+    ul_elements = div_votes.find_all("ul", attrs={"class": "division-names"})
+
+    # Get voters and tellers for this house division
+    voters  = [__get_votes_as_df(ul, ul.get("class") == ["division-names"]) 
+               for ul in ul_elements]
+    df_voters_and_tellers = pd.concat(voters)
+    df_voters_and_tellers['is_vote_aye'] = is_vote_aye
+
+    return df_voters_and_tellers
+
+def scrape_one_house_division(house_division_id, vote_block):
+    """
+    Extracts information about MPs who voted in a division.
+
+    Args:
+        house_division_id (str): The ID of the House Division block, e.g. g631.2
+        vote_block (bs4.element.Tag): <div> block for votes (the ones right below the dots)
+
+    Returns:
+        pd.DataFrame: A Pandas df with following columns: 
+            - house_division_id (str): The vote ID, e.g. g631.2
+            - vote_title (str): The title of the vote, e.g. Rural Connectivity
+            - mp_id (str): The MP ID, e.g. 26020 
+            - mp_name (str): The MP name, e.g. Anum Qaisar 
+            - party (str): The MP's party, e.g. Scottish National Party
+            - comment (str): The MP's comment, e.g. (proxy vote cast by...)
+            - vote (str): The MP's vote, e.g. aye
+            - is_teller (bool): True if the MP is a teller, False otherwise
+    """
+
+    vote_title = vote_block.find("h2").find("strong").text.strip()
+
+    divs_with_votes_class = 'division-section__vote division-section__vote__names'
+    divs_with_votes = vote_block.find_all('div', class_=divs_with_votes_class)
+
+    df_votes = pd.concat([__get_mps_in_vote(div) for div in divs_with_votes], ignore_index=True)
+    df_votes.insert(0, 'vote_title', vote_title)
+    df_votes.insert(0, 'house_division_id', house_division_id)
+
+    return df_votes
 
